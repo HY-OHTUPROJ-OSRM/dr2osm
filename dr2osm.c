@@ -104,7 +104,13 @@ handle_row(FILE *output, PJ *projection,
 	int prev_y = INT_MIN;
 
 	for (int i = 0; i < line_string->num_points; i++) {
-		Point_Zm *point = &line_string->points[i];
+		Point_Zm *point;
+
+		if (direction == 3) {
+			point = &line_string->points[line_string->num_points - 1 - i];
+		} else {
+			point = &line_string->points[i];
+		}
 
 		int x = (int)(point->x + 0.5);
 		int y = (int)(point->y + 0.5);
