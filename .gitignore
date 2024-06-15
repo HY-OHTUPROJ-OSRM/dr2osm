@@ -1,0 +1,5 @@
+*.gpkg
+*.osm
+*.out
+*.swp
+dr2osm
