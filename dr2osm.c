@@ -1,5 +1,7 @@
 /* Standard library. */
+#include <errno.h>
 #include <limits.h>
+#include <setjmp.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -12,16 +14,15 @@
 #include <proj.h>
 #include <sqlite3.h>
 
-/* Project code. */
-#include "types.h"
-
 #ifdef RELEASE_BUILD
 #define assert(P) 0
 #else
 #define assert(P) do { if (!(P)) __builtin_trap(); } while(0)
 #endif
 
-#define COMMIT_BLOCK_SIZE (16 * 1024)
+/* Project code. */
+#include "types.h"
+#include "buffer.c"
 
 #define HIGHWAY\
 	X(HW_NONE, "")\
@@ -69,122 +70,7 @@ static char sql_query[] =
 	"FROM dr_linkki_k AS l LEFT OUTER JOIN dr_nopeusrajoitus_k AS n USING (segm_id);\n";
 	//"WHERE l.kuntakoodi=91;";
 
-int *way_buffer;
-intptr_t way_buffer_offset;
-intptr_t way_buffer_size;
-char *way_buffer_commit_threshold;
-
-Node *node_buffer;
-intptr_t node_buffer_offset;
-intptr_t node_buffer_size;
-char *node_buffer_commit_threshold;
-
-int last_id = 0;
-
-static int *
-way_buffer_push_int(int value)
-{
-	assert(((char *)way_buffer + way_buffer_size)
-			- (char*)(way_buffer + way_buffer_offset)
-			> sizeof(int));
-
-	int *result = &way_buffer[way_buffer_offset++];
-
-	if ((char *)(way_buffer + way_buffer_offset) > way_buffer_commit_threshold) {
-		mprotect(way_buffer_commit_threshold, COMMIT_BLOCK_SIZE, PROT_READ | PROT_WRITE);
-		way_buffer_commit_threshold += COMMIT_BLOCK_SIZE;
-	}
-
-	*result = value;
-	return result;
-}
-
-static void
-way_buffer_push_string(const char *value)
-{
-	char chunk[4];
-
-	do {
-
-		for (int i = 0; i < 4; i++) {
-			chunk[i] = *value;
-			value += !!*value;
-		}
-
-		way_buffer_push_int(*(int *)chunk);
-	} while (chunk[3]);
-}
-
-static int
-way_buffer_pop_int()
-{
-	assert(way_buffer_offset > 0);
-	way_buffer_offset--;
-	return *(way_buffer++);
-}
-
-static char *
-way_buffer_pop_string()
-{
-	char *result = (char *)way_buffer;
-
-	int buf;
-	char *chunk = (char *)&buf;
-
-	do {
-		buf = way_buffer_pop_int();
-	} while (chunk[0] && chunk[1] && chunk[2] && chunk[3]);
-
-	return result;
-}
-
-static Node *
-alloc_node()
-{
-	assert(((char *)node_buffer + node_buffer_size)
-			- (char *)(node_buffer + node_buffer_offset)
-			> sizeof(Node));
-
-	Node *result = &node_buffer[node_buffer_offset++];
-
-	if ((char *)(node_buffer + node_buffer_offset) > node_buffer_commit_threshold) {
-		mprotect(node_buffer_commit_threshold, COMMIT_BLOCK_SIZE, PROT_READ | PROT_WRITE);
-		node_buffer_commit_threshold += COMMIT_BLOCK_SIZE;
-	}
-
-	return result;
-}
-
-static Node *
-node_upsert(int x, int y)
-{
-	Node *current = node_buffer;
-
-	while (1) {
-		if (x == current->x && y == current->y) {
-			return current;
-		}
-
-		int east = (x > current->x);
-		int north = (y > current->y);
-		int child_index = east | (north << 1);
-
-		if (current->child_node_offsets[child_index] == 0) {
-			Node *new = alloc_node();
-			intptr_t offset = new - current;
-
-			assert(offset > 0 && offset < INT_MAX);
-
-			current->child_node_offsets[child_index] = (int)offset;
-			new->x = x;
-			new->y = y;
-
-			return new;
-		}
-
-		current += current->child_node_offsets[child_index];
-	}
-}
+static int last_id = 0;
 
 static int
 generate_id()
@@ -314,6 +200,10 @@ handle_row(FILE *output, PJ *projection,
 int
 main(int argc, char **argv)
 {
+	/* Initialization. */
+
+	int result = 1;
+
 	if (argc != 3) {
 		return 1;
 	}
@@ -329,13 +219,19 @@ main(int argc, char **argv)
 		return 1;
 	}
 
+	FILE *output = fopen(output_path, "w");
+
+	if (!output) {
+		return 1;
+	}
+
 	sqlite3 *db;
 	int rc;
 
 	rc = sqlite3_open_v2(input_path, &db, SQLITE_OPEN_READONLY, 0);
 
 	if (rc != SQLITE_OK) {
-		return 1;
+		goto cleanup_output;
 	}
 
 	sqlite3_stmt *statement;
@@ -345,25 +241,33 @@ main(int argc, char **argv)
 	if (rc != SQLITE_OK) {
 		fprintf(stderr, "sqlite3_prepare_v2: %s\n", sqlite3_errstr(rc));
 		fprintf(stderr, "%s\n", sqlite3_errmsg(db));
+		goto cleanup_input;
 	}
 
-	FILE *output = fopen(output_path, "w");
+	if (!init_buffer(&way_buffer, (intptr_t)40 * 1024 * 1024 * 1024)) {
+		goto cleanup;
+	}
 
-	way_buffer_size = (intptr_t)40 * 1024 * 1024 * 1024;
-	way_buffer = mmap(0, way_buffer_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	way_buffer_commit_threshold = (char *)way_buffer;
-	node_buffer_size = sizeof(Node) << 31;
-	node_buffer = mmap(0, node_buffer_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	node_buffer_commit_threshold = (char *)node_buffer;
+	if (!init_buffer(&node_buffer, sizeof(Node) << 31)) {
+		goto cleanup;
+	}
 
-	*alloc_node() = (Node) {.x = 1018199, .y = 7248352};
+	if (setjmp(out_of_memory)) {
+		goto cleanup;
+	}
+
+	node_tree_root = alloc_node();
+	node_tree_root->x = 1018199;
+	node_tree_root->y = 7248352;
+
+	/* Write OSM header. */
 
 	fprintf(output, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
 	fprintf(output, "<osm version=\"0.6\" generator=\"dr2osm\">\n");
 
-	int num_ways = 0;
+	/* Process ways and nodes, and write nodes. */
 
-	fprintf(stderr, "\n\n\n");
+	int num_ways = 0;
 
 	do {
 		rc = sqlite3_step(statement);
@@ -408,30 +312,11 @@ main(int argc, char **argv)
 					sqlite3_errstr(rc),
 					sqlite3_sql(statement),
 					sqlite3_errmsg(db));
-			return 1;
-		}
-
-		if (!((num_ways - 1) & 0xFFF)) {
-			intptr_t buffer_committed =
-				(way_buffer_commit_threshold - (char *)way_buffer) +
-				(node_buffer_commit_threshold - (char *)node_buffer);
-
-			fprintf(stderr, "\33[A\33[2K\33[A\33[2K\33[A\33[2K\r");
-			fprintf(stderr, "Buffer committed: %10ld kilobytes\n", buffer_committed >> 10);
-			fprintf(stderr, "Nodes written out: %9ld\n", node_buffer_offset - 1);
-			fprintf(stderr, "Ways buffered: %13d\n", num_ways);
+			goto cleanup;
 		}
 	} while (rc != SQLITE_DONE);
 
-	intptr_t node_buffer_size = node_buffer_commit_threshold - (char *)node_buffer;
-	intptr_t way_buffer_size = way_buffer_commit_threshold - (char *)way_buffer;
-
-	fprintf(stderr, "\33[A\33[2K\33[A\33[2K\33[A\33[2K\r");
-	fprintf(stderr, "Node buffer size: %10ld kilobytes\n", node_buffer_size >> 10);
-	fprintf(stderr, "Way buffer size: %11ld kilobytes\n", way_buffer_size >> 10);
-	fprintf(stderr, "Nodes written out: %1$9ld/%1$ld\n", node_buffer_offset - 1);
-	fprintf(stderr, "Ways buffered: %1$13d/%1$d\n", num_ways);
-	fprintf(stderr, "\n");
+	/* Write buffered ways. */
 
 	for (int i = 0; i < num_ways; i++) {
 		int way_id = way_buffer_pop_int();
@@ -454,13 +339,20 @@ main(int argc, char **argv)
 		fprintf(output, "<tag k=\"maxspeed\" v=\"%d\"/>", maxspeed);
 		fprintf(output, "<tag k=\"name\" v=\"%s\"/>", name);
 		fprintf(output, "</way>\n");
-
-		if (!(i & 0xFFFF)) {
-			fprintf(stderr, "\33[A\33[2K\rWays written out: %10d/%d\n", i + 1, num_ways);
-		}
 	}
 
-	fprintf(stderr, "\33[A\33[2K\rWays written out: %1$10d/%1$d\n", num_ways);
-
 	fprintf(output, "</osm>\n");
+
+	result = 0;
+
+cleanup:
+	sqlite3_finalize(statement);
+
+cleanup_input:
+	sqlite3_close(db);
+
+cleanup_output:
+	fclose(output);
+
+	return result;
 }

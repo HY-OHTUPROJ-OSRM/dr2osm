@@ -1,4 +1,12 @@
 typedef struct {
+	char *start;
+	intptr_t size;
+	intptr_t first_in_offset;
+	intptr_t next_in_offset;
+	intptr_t commit_threshold_offset;
+} Growable_Buffer;
+
+typedef struct {
 	int x, y;
 	int id;
 	int child_node_offsets[4];
