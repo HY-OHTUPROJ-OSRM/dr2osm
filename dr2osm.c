@@ -211,10 +211,10 @@ main(int argc, char **argv)
 	int result = 1;
 
 	if (argc != 3) {
+		fprintf(stderr, "Usage: %s <input-path> <output-path>\n", argv[0]);
 		return 1;
 	}
 
-	char *argv0 = argv[0];
 	char *input_path = argv[1];
 	char *output_path = argv[2];
 
@@ -222,12 +222,16 @@ main(int argc, char **argv)
 			"EPSG:3067", "EPSG:4326", 0);
 
 	if (!projection) {
+		fprintf(stderr, "proj_create_crs_to_crs: %s\n",
+				proj_errno_string(proj_errno(0)));
 		return 1;
 	}
 
 	FILE *output = fopen(output_path, "w");
 
 	if (!output) {
+		fprintf(stderr, "Unable to open \"%s\" for writing: %s\n",
+				output_path, strerror(errno));
 		return 1;
 	}
 
@@ -237,6 +241,8 @@ main(int argc, char **argv)
 	rc = sqlite3_open_v2(input_path, &db, SQLITE_OPEN_READONLY, 0);
 
 	if (rc != SQLITE_OK) {
+		fprintf(stderr, "Unable to open \"%s\" for reading: %s\n",
+				input_path, sqlite3_errmsg(db));
 		goto cleanup_output;
 	}
 
