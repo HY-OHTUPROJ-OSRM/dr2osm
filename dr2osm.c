@@ -12,6 +12,9 @@
 #include <proj.h>
 #include <sqlite3.h>
 
+/* Project code. */
+#include "types.h"
+
 #ifdef RELEASE_BUILD
 #define assert(P) 0
 #else
@@ -55,31 +58,6 @@ static char *osm_strings[STRING_COUNT] = {
 	ONEWAY
 #undef X
 };
-
-typedef struct __attribute__((packed)) {
-	uint8_t magic[2];
-	uint8_t version;
-	uint8_t flags;
-	uint32_t srs_id;
-	char envelope[];
-} Geopackage_Binary_Header;
-
-typedef struct {
-	double x, y, z, m;
-} Point_Zm;
-
-typedef struct __attribute__((packed)) {
-	uint8_t byte_order;
-	uint32_t type;
-	uint32_t num_points;
-	Point_Zm points[];
-} Wkb_Line_String_Zm;
-
-typedef struct {
-	int x, y;
-	int id;
-	int child_node_offsets[4];
-} Node;
 
 char sql_query[] =
 	"SELECT COALESCE(n.geom, l.geom) as geom,"
