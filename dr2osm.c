@@ -59,7 +59,7 @@ static char *osm_strings[STRING_COUNT] = {
 #undef X
 };
 
-char sql_query[] =
+static char sql_query[] =
 	"SELECT COALESCE(n.geom, l.geom) as geom,"
 		"COALESCE(n.arvo, 0) AS speed_limit,"
 		"COALESCE(l.toiminn_lk, 0) AS class,"
