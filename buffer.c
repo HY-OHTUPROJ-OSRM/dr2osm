@@ -3,7 +3,7 @@
 static Growable_Buffer way_buffer, node_buffer;
 static Node *node_tree_root;
 
-jmp_buf out_of_memory;
+static jmp_buf out_of_memory;
 
 static int
 init_buffer(Growable_Buffer *buffer, intptr_t size)
