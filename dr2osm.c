@@ -227,7 +227,13 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	FILE *output = fopen(output_path, "w");
+	FILE *output;
+
+	if (!strcmp(output_path, "-")) {
+		output = stdout;
+	} else {
+		output = fopen(output_path, "w");
+	}
 
 	if (!output) {
 		fprintf(stderr, "Unable to open \"%s\" for writing: %s\n",
