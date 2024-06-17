@@ -1,0 +1,29 @@
+dr2osm
+======
+
+Command line utility to convert Digiroad K-material geopackage to an OSM format
+compatible with OSRM. Get the Digiroad material at
+https://ava.vaylapilvi.fi/ava/Tie/Digiroad/Aineistojulkaisut
+
+Dependencies
+------------
+
+- libsqlite3
+- libproj
+
+Installation
+------------
+
+Navigate to the project root directory and run the command
+
+	./build.sh release
+
+to compile the program. This outputs a single executable file called `dr2osm`.
+
+Usage
+-----
+
+The program takes two arguments: first the name of the geopackage file used as
+input and second the name of the OSM file to be written. For example:
+
+	dr2osm KokoSuomi_Digiroad_K_GeoPackage.gpkg route-data.osm
