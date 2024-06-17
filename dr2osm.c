@@ -72,6 +72,64 @@ static char sql_query[] =
 
 static int last_id = 0;
 
+static sqlite3_stmt *
+prepare_statement(sqlite3 *db, char *sql)
+{
+	sqlite3_stmt *result = 0;
+
+	int rc = sqlite3_prepare_v2(db, sql, -1, &result, 0);
+
+	if (rc != SQLITE_OK) {
+		fprintf(stderr, "Unable to read data from input: %s\n", sqlite3_errstr(rc));
+		fprintf(stderr, "%s\n", sqlite3_errmsg(db));
+		return 0;
+	}
+
+	return result;
+}
+
+static int
+get_num_ways(sqlite3 *db)
+{
+	sqlite3_stmt *statement = prepare_statement(db, "SELECT COUNT(*) FROM dr_linkki_k;");
+
+	if (!statement) {
+		return 0;
+	}
+
+	int result = 0;
+	int rc;
+
+	do {
+		rc = sqlite3_step(statement);
+
+		assert(rc != SQLITE_MISUSE);
+
+		switch (rc) {
+		case SQLITE_BUSY:
+			break;
+
+		case SQLITE_ROW:
+			result = sqlite3_column_int(statement, 0);
+
+			if (!result) {
+				fprintf(stderr, "Input does not contain any ways.\n");
+			}
+
+			break;
+
+		default:
+			fprintf(stderr, "Unable to read data from input: %s\n", sqlite3_errstr(rc));
+			fprintf(stderr, "%s\n", sqlite3_errmsg(db));
+			break;
+		}
+	} while (rc == SQLITE_BUSY);
+
+	sqlite3_finalize(statement);
+
+	return result;
+}
+
 static int
 generate_id()
 {
@@ -252,14 +310,16 @@ main(int argc, char **argv)
 		goto cleanup_output;
 	}
 
-	sqlite3_stmt *statement;
+	int num_ways_total = get_num_ways(db);
 
-	rc = sqlite3_prepare_v2(db, sql_query, sizeof(sql_query), &statement, 0);
+	if (!num_ways_total) {
+		goto cleanup_output;
+	}
 
-	if (rc != SQLITE_OK) {
-		fprintf(stderr, "sqlite3_prepare_v2: %s\n", sqlite3_errstr(rc));
-		fprintf(stderr, "%s\n", sqlite3_errmsg(db));
-		goto cleanup_input;
+	sqlite3_stmt *statement = prepare_statement(db, sql_query);
+
+	if (!statement) {
+		goto cleanup_output;
 	}
 
 	if (!init_buffer(&way_buffer, (intptr_t)40 * 1024 * 1024 * 1024)) {
@@ -285,7 +345,9 @@ main(int argc, char **argv)
 
 	/* Process ways and nodes, and write nodes. */
 
-	int num_ways = 0;
+	int num_ways_processed = 0;
+
+	fprintf(stderr, "(1/2) Processing ways.\t\t  0%%\n");
 
 	do {
 		rc = sqlite3_step(statement);
@@ -312,10 +374,6 @@ main(int argc, char **argv)
 			assert(sqlite3_column_type(statement, 4) == SQLITE_INTEGER);
 			assert(sqlite3_column_type(statement, 5) == SQLITE_TEXT);
 
-			num_ways++;
-
-			assert(num_ways > 0);
-
 			handle_row(output, projection,
 					sqlite3_column_blob(statement, 0),
 					sqlite3_column_int(statement, 1),
@@ -323,6 +381,14 @@ main(int argc, char **argv)
 					sqlite3_column_int(statement, 3),
 					sqlite3_column_int(statement, 4),
 					sqlite3_column_text(statement, 5));
+
+			num_ways_processed++;
+
+			if (!(num_ways_processed & 0x3FFF)) {
+				fprintf(stderr, "\33[A\33[2K\r(1/2) Processing ways.\t\t%3d%%\n",
+						num_ways_processed * 100 / num_ways_total);
+			}
+
 			break;
 
 		default:
@@ -334,9 +400,18 @@ main(int argc, char **argv)
 		}
 	} while (rc != SQLITE_DONE);
 
+	fprintf(stderr, "\33[A\33[2K\r(1/2) Processing ways.\t\t100%%\n");
+
 	/* Write buffered ways. */
 
-	for (int i = 0; i < num_ways; i++) {
+	fprintf(stderr, "\n");
+
+	for (int i = 0; i < num_ways_processed; i++) {
+		if (!(i & 0x3FFF)) {
+			fprintf(stderr, "\33[A\33[\r2K(2/2) Writing ways to file.\t%3d%%\n",
+					i * 100 / num_ways_processed);
+		}
+
 		int way_id = way_buffer_pop_int();
 
 		fprintf(output, "<way visible=\"true\" id=\"%d\">", way_id);
@@ -358,6 +433,8 @@ main(int argc, char **argv)
 		fprintf(output, "<tag k=\"name\" v=\"%s\"/>", name);
 		fprintf(output, "</way>\n");
 	}
+
+	fprintf(stderr, "\33[A\33[2K\r(2/2) Writing ways to file.\t100%%\n");
 
 	fprintf(output, "</osm>\n");
 
