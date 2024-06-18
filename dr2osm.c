@@ -144,6 +144,26 @@ handle_row(FILE *output, PJ *projection,
 		int speed_limit, int class, int type, int direction,
 		const char *name)
 {
+	/* The format of a single way in the way buffer:
+	 *
+	 * int way_id
+	 * int... node_ids
+	 * int node_ids_terminator = 0
+	 * int highway
+	 * int route
+	 * int oneway
+	 * int maxspeed
+	 * string name
+	 *
+	 * way_id corresponds to the <way> tag's id attribute. Each element
+	 * of node_ids corresponds to the ref attribute of a distinct <nd> tag
+	 * within the way element. Each of highway, route and oneway is an index
+	 * into the osm_strings array defined at the top of this file, the
+	 * corresponding element of which corresponds to the v attribute of a
+	 * <tag> tag in the way element, with "highway", "route" or "oneway"
+	 * respectively as its k attribute. name corresponds to the v attribute
+	 * of a <tag> tag in the way element, with "name" as its k attribute. */
+
 	int *way_id = way_buffer_push_int(0);
 
 	int envelope_indicator = (geom_header->flags >> 1) & 7;
