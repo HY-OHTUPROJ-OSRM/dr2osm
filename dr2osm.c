@@ -138,7 +138,7 @@ generate_id()
 	return result;
 }
 
-static void
+static int
 handle_row(FILE *output, PJ *projection,
 		const Geopackage_Binary_Header *geom_header,
 		int speed_limit, int class, int type, int direction,
@@ -164,19 +164,26 @@ handle_row(FILE *output, PJ *projection,
 	 * respectively as its k attribute. name corresponds to the v attribute
 	 * of a <tag> tag in the way element, with "name" as its k attribute. */
 
-	int *way_id = way_buffer_push_int(0);
-
 	int envelope_indicator = (geom_header->flags >> 1) & 7;
 
-	assert(envelope_indicator >= 0 && envelope_indicator <= 4);
+	if (envelope_indicator > 4) {
+		return 0;
+	}
 
 	static int envelope_sizes[] = { 0, 32, 48, 48, 64 };
 
 	int envelope_size = envelope_sizes[envelope_indicator];
 	Wkb_Line_String_Zm *line_string = (Wkb_Line_String_Zm *)(geom_header->envelope + envelope_size);
 
-	assert(line_string->byte_order = 1); /* Little endian. */
-	assert(line_string->type = 3002); /* wkbLineStringZM */
+	int can_parse_geometry =
+		line_string->byte_order == 1 /* Little endian. */
+		&& line_string->type == 3002; /* wkbLineStringZM */
+
+	if (!can_parse_geometry) {
+		return 0;
+	}
+
+	int *way_id = way_buffer_push_int(0);
 
 	int prev_x = INT_MIN;
 	int prev_y = INT_MIN;
@@ -279,6 +286,8 @@ handle_row(FILE *output, PJ *projection,
 	way_buffer_push_int(oneway);
 	way_buffer_push_int(speed_limit);
 	way_buffer_push_string(name);
+
+	return 1;
 }
 
 int
@@ -366,6 +375,7 @@ main(int argc, char **argv)
 	/* Process ways and nodes, and write nodes. */
 
 	int num_ways_processed = 0;
+	int num_invalid_ways = 0;
 
 	fprintf(stderr, "(1/2) Processing ways.\t\t  0%%\n");
 
@@ -394,7 +404,7 @@ main(int argc, char **argv)
 			assert(sqlite3_column_type(statement, 4) == SQLITE_INTEGER);
 			assert(sqlite3_column_type(statement, 5) == SQLITE_TEXT);
 
-			handle_row(output, projection,
+			int handled = handle_row(output, projection,
 					sqlite3_column_blob(statement, 0),
 					sqlite3_column_int(statement, 1),
 					sqlite3_column_int(statement, 2),
@@ -402,11 +412,15 @@ main(int argc, char **argv)
 					sqlite3_column_int(statement, 4),
 					sqlite3_column_text(statement, 5));
 
-			num_ways_processed++;
+			if (handled) {
+				num_ways_processed++;
+			} else {
+				num_invalid_ways++;
+			}
 
 			if (!(num_ways_processed & 0x3FFF)) {
 				fprintf(stderr, "\33[A\33[2K\r(1/2) Processing ways.\t\t%3d%%\n",
-						num_ways_processed * 100 / num_ways_total);
+						(num_ways_processed + num_invalid_ways) * 100 / num_ways_total);
 			}
 
 			break;
@@ -455,6 +469,12 @@ main(int argc, char **argv)
 	}
 
 	fprintf(stderr, "\33[A\33[2K\r(2/2) Writing ways to file.\t100%%\n");
+
+	if (num_invalid_ways > 0) {
+		fprintf(stderr, "Input contained %d ways with geometries that"
+				"could not be parsed and were skipped.\n",
+				num_invalid_ways);
+	}
 
 	fprintf(output, "</osm>\n");
 
