@@ -1,3 +1,11 @@
+#if defined(_MSC_VER)
+#define PACK_BEGIN __pragma(pack(push, 1)) struct
+#define PACK_END __pragma(pack(pop))
+#else
+#define PACK_BEGIN struct __attribute__((packed))
+#define PACK_END
+#endif
+
 typedef struct {
 	char *input_path;
 	char *output_path;
@@ -26,19 +34,19 @@ typedef struct {
 	int default_speed_limits;
 } Query_Context;
 
-typedef struct __attribute__((packed)) {
+typedef PACK_BEGIN {
 	uint8_t magic[2];
 	uint8_t version;
 	uint8_t flags;
 	uint32_t srs_id;
 	char envelope[];
-} Geopackage_Binary_Header;
+} PACK_END Geopackage_Binary_Header;
 
-typedef struct __attribute__((packed)) {
+typedef PACK_BEGIN {
 	uint8_t byte_order;
 	uint32_t type;
 	uint32_t num_points;
 	double points[];
-} Wkb_Line_String_Any;
+} PACK_END Wkb_Line_String_Any;
 
 typedef int Row_Function(sqlite3_stmt *, Query_Context *);

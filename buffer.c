@@ -5,15 +5,80 @@ static Node *node_tree_root;
 
 static jmp_buf out_of_memory;
 
+#if defined(_WIN32)
+
+static void *
+reserve_memory(intptr_t size)
+{
+	return VirtualAlloc(0, size, MEM_RESERVE, PAGE_NOACCESS);
+}
+
+static int
+commit_memory(Growable_Buffer *buffer)
+{
+	int result = !!VirtualAlloc(buffer->start + buffer->commit_threshold_offset,
+			COMMIT_BLOCK_SIZE, MEM_COMMIT, PAGE_READWRITE);
+
+	if (result) {
+		buffer->commit_threshold_offset += COMMIT_BLOCK_SIZE;
+	}
+
+	return result;
+}
+
+static char *
+get_memory_error_message()
+{
+	static char result[512];
+
+	FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM,
+			0, GetLastError(), 0,
+			result, 512 / sizeof(TCHAR), 0);
+
+	return result;
+}
+
+#else
+
+static void *
+reserve_memory(intptr_t size)
+{
+	void *result = mmap(0, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+
+	return result == MAP_FAILED ? 0 : result;
+}
+
+static int
+commit_memory(Growable_Buffer *buffer)
+{
+	int result = !mprotect(buffer->start + buffer->commit_threshold_offset,
+			COMMIT_BLOCK_SIZE, PROT_READ | PROT_WRITE);
+
+	if (result) {
+		buffer->commit_threshold_offset += COMMIT_BLOCK_SIZE;
+	}
+
+	return result;
+}
+
+static char *
+get_memory_error_message()
+{
+	return strerror(errno);
+}
+
+#endif
+
 static int
 init_buffer(Growable_Buffer *buffer, intptr_t size)
 {
 	assert(size >= 0);
 
-	void *start = mmap(0, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	void *start = reserve_memory(size);
 
-	if (start == MAP_FAILED) {
-		fprintf(stderr, "Unable to reserve address range for buffer: %s\n", strerror(errno));
+	if (!start) {
+		fprintf(stderr, "Unable to reserve address range for buffer: %s\n",
+				get_memory_error_message());
 		return 0;
 	}
 
@@ -39,16 +104,11 @@ buffer_push(Growable_Buffer *buffer, intptr_t size)
 	char *result = buffer->start + buffer->next_in_offset;
 	buffer->next_in_offset += size;
 
-	if (buffer->next_in_offset > buffer->commit_threshold_offset) {
-		int mp = mprotect(buffer->start + buffer->commit_threshold_offset,
-				COMMIT_BLOCK_SIZE, PROT_READ | PROT_WRITE);
-
-		if (mp == -1) {
-			fprintf(stderr, "Unable to commit memory to buffer: %s\n", strerror(errno));
-			longjmp(out_of_memory, 1);
-		}
-
-		buffer->commit_threshold_offset += COMMIT_BLOCK_SIZE;
+	if (buffer->next_in_offset > buffer->commit_threshold_offset
+			&& !commit_memory(buffer)) {
+		fprintf(stderr, "Unable to commit memory to buffer: %s\n",
+				get_memory_error_message());
+		longjmp(out_of_memory, 1);
 	}
 
 	return result;

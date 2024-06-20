@@ -7,15 +7,22 @@
 #include <string.h>
 
 /* System. */
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
 #include <sys/mman.h>
 #include <unistd.h>
+#endif
 
 /* Third-party libraries. */
 #include <proj.h>
 #include <sqlite3.h>
 
-#ifdef RELEASE_BUILD
+#if defined(RELEASE_BUILD)
 #define assert(P) 0
+#elif defined(_WIN32)
+#define assert(P) do { if (!(P)) DebugBreak(); } while(0)
 #else
 #define assert(P) do { if (!(P)) __builtin_trap(); } while(0)
 #endif
