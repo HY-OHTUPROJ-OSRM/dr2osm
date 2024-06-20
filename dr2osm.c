@@ -477,7 +477,8 @@ main(int argc, char **argv)
 	Program_Configuration config = {0};
 
 	if (!parse_commandline_arguments(&config, argc, argv)) {
-		fprintf(stderr, "Usage: %s <input-path> <output-path>\n", argv[0]);
+		fprintf(stderr, "Usage: %s [--mml-iceroads <ice-roads-path>] <input-path> <output-path>\n",
+				argv[0]);
 		return 1;
 	}
 

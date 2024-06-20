@@ -27,3 +27,8 @@ The program takes two arguments: first the name of the geopackage file used as
 input and second the name of the OSM file to be written. For example:
 
 	dr2osm KokoSuomi_Digiroad_K_GeoPackage.gpkg route-data.osm
+
+If the input argument is preceded by the flag --mml-iceroads followed by the
+name of a geopackage file containing National land survey (Maanmittauslaitos)
+ice road data, those roads will be included in the output OSM file with the
+"ice_road" tag.
