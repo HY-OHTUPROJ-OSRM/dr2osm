@@ -24,6 +24,8 @@
 #include "types.h"
 #include "buffer.c"
 
+#define ICE_ROAD_SPEED_LIMIT 30
+
 #define HIGHWAY\
 	X(HW_NONE, "")\
 	X(HW_FOOTWAY, "footway")\
@@ -32,7 +34,8 @@
 	X(HW_PRIMARY, "primary")\
 	X(HW_SECONDARY, "secondary")\
 	X(HW_TERTIARY, "tertiary")\
-	X(HW_RESIDENTIAL, "residential")
+	X(HW_RESIDENTIAL, "residential")\
+	X(HW_UNCLASSIFIED, "unclassified")
 
 #define ROUTE\
 	X(RT_NONE, "")\
@@ -43,11 +46,15 @@
 	X(OW_NO, "no")\
 	X(OW_YES, "yes")
 
+#define ADDITIONAL_TAGS\
+	X(AT_ICE_ROAD, "ice_road")
+
 enum {
 #define X(IDENT, STRING) IDENT,
 	HIGHWAY
 	ROUTE
 	ONEWAY
+	ADDITIONAL_TAGS
 #undef X
 	STRING_COUNT
 };
@@ -57,20 +64,61 @@ static char *osm_strings[STRING_COUNT] = {
 	HIGHWAY
 	ROUTE
 	ONEWAY
+	ADDITIONAL_TAGS
 #undef X
 };
 
-static char sql_query[] =
+static char input_sql_query[] =
 	"SELECT COALESCE(n.geom, l.geom) as geom,"
 		"COALESCE(n.arvo, 0) AS speed_limit,"
 		"COALESCE(l.toiminn_lk, 0) AS class,"
 		"COALESCE(l.linkkityyp, 0) AS type,"
 		"COALESCE(l.ajosuunta, 0) AS direction,"
-		"COALESCE(l.tienimi_su, l.tienimi_ru, l.tienimi_sa) AS name\n"
+		"COALESCE(l.tienimi_su, l.tienimi_ru, l.tienimi_sa, '') AS name\n"
 	"FROM dr_linkki_k AS l LEFT OUTER JOIN dr_nopeusrajoitus_k AS n USING (segm_id);\n";
 	//"WHERE l.kuntakoodi=91;";
 
+static char mml_iceroads_sql_query[] =
+	"SELECT geom,"
+		"COALESCE(yksisuuntaisuus, -1) AS direction,"
+		"COALESCE("
+			"nimi_suomi, nimi_ruotsi, nimi_inarinsaame, nimi_koltansaame, nimi_pohjoissaame, ''"
+		") AS name\n"
+	"FROM iceroads;";
+
 static int last_id = 0;
+
+static int
+parse_commandline_arguments(Program_Configuration *config, int argc, char **argv)
+{
+	argc--;
+	argv++;
+
+	while (argc > 0 && argv[0][0] == '-') {
+		char *argument = argv[0];
+		argc--;
+		argv++;
+
+		if (!strcmp(argument, "--mml-iceroads")) {
+			if (argc < 1) {
+				return 0;
+			}
+
+			config->mml_iceroads_path = argv[0];
+			argc--;
+			argv++;
+		}
+	}
+
+	if (argc != 2) {
+		return 0;
+	}
+
+	config->input_path = argv[0];
+	config->output_path = argv[1];
+
+	return 1;
+}
 
 static sqlite3_stmt *
 prepare_statement(sqlite3 *db, char *sql)
@@ -139,31 +187,7 @@ generate_id()
 }
 
 static int
-handle_row(FILE *output, PJ *projection,
-		const Geopackage_Binary_Header *geom_header,
-		int speed_limit, int class, int type, int direction,
-		const char *name)
-{
-	/* The format of a single way in the way buffer:
-	 *
-	 * int way_id
-	 * int... node_ids
-	 * int node_ids_terminator = 0
-	 * int highway
-	 * int route
-	 * int oneway
-	 * int maxspeed
-	 * string name
-	 *
-	 * way_id corresponds to the <way> tag's id attribute. Each element
-	 * of node_ids corresponds to the ref attribute of a distinct <nd> tag
-	 * within the way element. Each of highway, route and oneway is an index
-	 * into the osm_strings array defined at the top of this file, the
-	 * corresponding element of which corresponds to the v attribute of a
-	 * <tag> tag in the way element, with "highway", "route" or "oneway"
-	 * respectively as its k attribute. name corresponds to the v attribute
-	 * of a <tag> tag in the way element, with "name" as its k attribute. */
-
+buffer_ids(const Geopackage_Binary_Header *geom_header, int reverse_node_order, Query_Context *context) {
 	int envelope_indicator = (geom_header->flags >> 1) & 7;
 
 	if (envelope_indicator > 4) {
@@ -173,13 +197,29 @@ handle_row(FILE *output, PJ *projection,
 	static int envelope_sizes[] = { 0, 32, 48, 48, 64 };
 
 	int envelope_size = envelope_sizes[envelope_indicator];
-	Wkb_Line_String_Zm *line_string = (Wkb_Line_String_Zm *)(geom_header->envelope + envelope_size);
+	Wkb_Line_String_Any *line_string = (Wkb_Line_String_Any *)(geom_header->envelope + envelope_size);
 
-	int can_parse_geometry =
-		line_string->byte_order == 1 /* Little endian. */
-		&& line_string->type == 3002; /* wkbLineStringZM */
+	if (line_string->byte_order != 1) {
+		return 0;
+	}
 
-	if (!can_parse_geometry) {
+	int point_stride;
+
+	switch (line_string->type) {
+	case 2: /* wkbLineString */
+		point_stride = 2;
+		break;
+
+	case 1002: /* wkbLineStringZ */
+	case 2002: /* wkbLineStringM */
+		point_stride = 3;
+		break;
+
+	case 3002: /* wkbLineStringZM */
+		point_stride = 4;
+		break;
+
+	default:
 		return 0;
 	}
 
@@ -188,17 +228,18 @@ handle_row(FILE *output, PJ *projection,
 	int prev_x = INT_MIN;
 	int prev_y = INT_MIN;
 
+	double *p = line_string->points;
+
+	if (reverse_node_order) {
+		p += (line_string->num_points - 1) * point_stride;
+		point_stride = -point_stride;
+	}
+
 	for (int i = 0; i < line_string->num_points; i++) {
-		Point_Zm *point;
+		int x = (int)(p[0] + 0.5);
+		int y = (int)(p[1] + 0.5);
 
-		if (direction == 3) {
-			point = &line_string->points[line_string->num_points - 1 - i];
-		} else {
-			point = &line_string->points[i];
-		}
-
-		int x = (int)(point->x + 0.5);
-		int y = (int)(point->y + 0.5);
+		p += point_stride;
 
 		if (x == prev_x && y == prev_y) {
 			continue;
@@ -213,9 +254,10 @@ handle_row(FILE *output, PJ *projection,
 			node->id = generate_id();
 
 			PJ_COORD fin = proj_coord((double)x, (double)y, 0, 0);
-			PJ_COORD wgs = proj_trans(projection, PJ_FWD, fin);
+			PJ_COORD wgs = proj_trans(context->projection, PJ_FWD, fin);
 
-			fprintf(output, "<node visible=\"true\" id=\"%d\" lat=\"%.9f\" lon=\"%.9f\"/>\n",
+			fprintf(context->output,
+					"<node visible=\"true\" id=\"%d\" lat=\"%.9f\" lon=\"%.9f\"/>\n",
 					node->id, wgs.xy.x, wgs.xy.y);
 		}
 
@@ -224,6 +266,61 @@ handle_row(FILE *output, PJ *projection,
 
 	way_buffer_push_int(0);
 	*way_id = generate_id();
+
+	return 1;
+}
+
+static int
+digiroad_row(sqlite3_stmt *statement, Query_Context *context)
+{
+	/* The format of a single way in the way buffer:
+	 *
+	 * int way_id
+	 * int... node_ids
+	 * int node_ids_terminator = 0
+	 * int highway
+	 * int route
+	 * int oneway
+	 * int maxspeed
+	 * string name
+	 * int... additional_tags
+	 * int additional_tags_terminator = 0
+	 *
+	 * way_id corresponds to the <way> tag's id attribute. Each element
+	 * of node_ids corresponds to the ref attribute of a distinct <nd> tag
+	 * within the way element. Each of highway, route and oneway is an index
+	 * into the osm_strings array defined at the top of this file, the
+	 * corresponding element of which corresponds to the v attribute of a
+	 * <tag> tag in the way element, with "highway", "route" or "oneway"
+	 * respectively as its k attribute. name corresponds to the v attribute
+	 * of a <tag> tag in the way element, with "name" as its k attribute. */
+
+	assert(!strcmp(sqlite3_column_name(statement, 0), "geom"));
+	assert(!strcmp(sqlite3_column_name(statement, 1), "speed_limit"));
+	assert(!strcmp(sqlite3_column_name(statement, 2), "class"));
+	assert(!strcmp(sqlite3_column_name(statement, 3), "type"));
+	assert(!strcmp(sqlite3_column_name(statement, 4), "direction"));
+	assert(!strcmp(sqlite3_column_name(statement, 5), "name"));
+
+	assert(sqlite3_column_type(statement, 0) == SQLITE_BLOB);
+	assert(sqlite3_column_type(statement, 1) == SQLITE_INTEGER);
+	assert(sqlite3_column_type(statement, 2) == SQLITE_INTEGER);
+	assert(sqlite3_column_type(statement, 3) == SQLITE_INTEGER);
+	assert(sqlite3_column_type(statement, 4) == SQLITE_INTEGER);
+	assert(sqlite3_column_type(statement, 5) == SQLITE_TEXT);
+
+	const Geopackage_Binary_Header *geom_header = sqlite3_column_blob(statement, 0);
+	int speed_limit = sqlite3_column_int(statement, 1);
+	int class = sqlite3_column_int(statement, 2);
+	int type = sqlite3_column_int(statement, 3);
+	int direction = sqlite3_column_int(statement, 4);
+	const char *name = sqlite3_column_text(statement, 5);
+
+	int reverse_node_order = (direction == 3);
+
+	if (!buffer_ids(geom_header, reverse_node_order, context)) {
+		return 0;
+	}
 
 	int highway = HW_NONE;
 
@@ -257,15 +354,11 @@ handle_row(FILE *output, PJ *projection,
 		}
 	}
 
-	way_buffer_push_int(highway);
-
 	int route = RT_NONE;
 
 	if (type == 21 && class != 8) {
 		route = RT_FERRY;
 	}
-
-	way_buffer_push_int(route);
 
 	int oneway = OW_NONE;
 
@@ -283,11 +376,96 @@ handle_row(FILE *output, PJ *projection,
 		break;
 	}
 
+	way_buffer_push_int(highway);
+	way_buffer_push_int(route);
 	way_buffer_push_int(oneway);
 	way_buffer_push_int(speed_limit);
 	way_buffer_push_string(name);
+	way_buffer_push_int(0); /* No additional tags. */
 
 	return 1;
+}
+
+static int
+mml_iceroads_row(sqlite3_stmt* statement, Query_Context *context)
+{
+	assert(!strcmp(sqlite3_column_name(statement, 0), "geom"));
+	assert(!strcmp(sqlite3_column_name(statement, 1), "direction"));
+	assert(!strcmp(sqlite3_column_name(statement, 2), "name"));
+
+	assert(sqlite3_column_type(statement, 0) == SQLITE_BLOB);
+	assert(sqlite3_column_type(statement, 1) == SQLITE_INTEGER);
+	assert(sqlite3_column_type(statement, 2) == SQLITE_TEXT);
+
+	const Geopackage_Binary_Header *geom_header = sqlite3_column_blob(statement, 0);
+	int direction = sqlite3_column_int(statement, 1);
+	const char *name = sqlite3_column_text(statement, 2);
+
+	int reverse_node_order = (direction == 2);
+
+	if (!buffer_ids(geom_header, reverse_node_order, context)) {
+		return 0;
+	}
+
+	int oneway = OW_NONE;
+
+	switch (direction) {
+	case 0:
+		oneway = OW_NO;
+		break;
+
+	case 1:
+	case 2:
+		oneway = OW_YES;
+		break;
+
+	default:
+		break;
+	}
+
+	way_buffer_push_int(HW_UNCLASSIFIED);
+	way_buffer_push_int(RT_NONE);
+	way_buffer_push_int(oneway);
+	way_buffer_push_int(ICE_ROAD_SPEED_LIMIT);
+	way_buffer_push_string(name);
+	way_buffer_push_int(AT_ICE_ROAD);
+	way_buffer_push_int(0);
+
+	return 1;
+}
+
+static int
+run_query(sqlite3_stmt *statement, Row_Function *callback, Query_Context *context)
+{
+	int rc;
+
+	do {
+		rc = sqlite3_step(statement);
+
+		assert(rc != SQLITE_MISUSE);
+
+		switch (rc) {
+		case SQLITE_DONE:
+		case SQLITE_BUSY:
+			break;
+
+		case SQLITE_ROW:
+			if (callback(statement, context)) {
+				context->num_valid++;
+			} else {
+				context->num_invalid++;
+			}
+
+			break;
+
+		default:
+			fprintf(stderr, "sqlite3_step: %s\n%s\n%s\n",
+					sqlite3_errstr(rc),
+					sqlite3_sql(statement),
+					sqlite3_errmsg(sqlite3_db_handle(statement)));
+			return 0;
+		}
+	} while (rc != SQLITE_DONE);
 }
 
 int
@@ -296,14 +474,12 @@ main(int argc, char **argv)
 	/* Initialization. */
 
 	int result = 1;
+	Program_Configuration config = {0};
 
-	if (argc != 3) {
+	if (!parse_commandline_arguments(&config, argc, argv)) {
 		fprintf(stderr, "Usage: %s <input-path> <output-path>\n", argv[0]);
 		return 1;
 	}
-
-	char *input_path = argv[1];
-	char *output_path = argv[2];
 
 	PJ *projection = proj_create_crs_to_crs(0,
 			"EPSG:3067", "EPSG:4326", 0);
@@ -316,36 +492,30 @@ main(int argc, char **argv)
 
 	FILE *output;
 
-	if (!strcmp(output_path, "-")) {
+	if (!strcmp(config.output_path, "-")) {
 		output = stdout;
 	} else {
-		output = fopen(output_path, "w");
+		output = fopen(config.output_path, "w");
 	}
 
 	if (!output) {
 		fprintf(stderr, "Unable to open \"%s\" for writing: %s\n",
-				output_path, strerror(errno));
+				config.output_path, strerror(errno));
 		return 1;
 	}
 
 	sqlite3 *db;
 	int rc;
 
-	rc = sqlite3_open_v2(input_path, &db, SQLITE_OPEN_READONLY, 0);
+	rc = sqlite3_open_v2(config.input_path, &db, SQLITE_OPEN_READONLY, 0);
 
 	if (rc != SQLITE_OK) {
 		fprintf(stderr, "Unable to open \"%s\" for reading: %s\n",
-				input_path, sqlite3_errmsg(db));
+				config.input_path, sqlite3_errmsg(db));
 		goto cleanup_output;
 	}
 
-	int num_ways_total = get_num_ways(db);
-
-	if (!num_ways_total) {
-		goto cleanup_output;
-	}
-
-	sqlite3_stmt *statement = prepare_statement(db, sql_query);
+	sqlite3_stmt *statement = prepare_statement(db, input_sql_query);
 
 	if (!statement) {
 		goto cleanup_output;
@@ -376,76 +546,46 @@ main(int argc, char **argv)
 
 	int num_ways_processed = 0;
 	int num_invalid_ways = 0;
+	Query_Context context = {0};
+	context.output = output;
+	context.projection = projection;
 
-	fprintf(stderr, "(1/2) Processing ways.\t\t  0%%\n");
+	if (!run_query(statement, digiroad_row, &context)) {
+		goto cleanup;
+	}
 
-	do {
-		rc = sqlite3_step(statement);
+	num_ways_processed += context.num_valid;
+	num_invalid_ways += context.num_invalid;
 
-		assert(rc != SQLITE_MISUSE);
+	context.num_valid = context.num_invalid = 0;
 
-		switch (rc) {
-		case SQLITE_DONE:
-		case SQLITE_BUSY:
-			break;
+	if (config.mml_iceroads_path) {
+		sqlite3_finalize(statement);
+		sqlite3_close(db);
 
-		case SQLITE_ROW:
-			assert(!strcmp(sqlite3_column_name(statement, 0), "geom"));
-			assert(!strcmp(sqlite3_column_name(statement, 1), "speed_limit"));
-			assert(!strcmp(sqlite3_column_name(statement, 2), "class"));
-			assert(!strcmp(sqlite3_column_name(statement, 3), "type"));
-			assert(!strcmp(sqlite3_column_name(statement, 4), "direction"));
-			assert(!strcmp(sqlite3_column_name(statement, 5), "name"));
+		rc = sqlite3_open_v2(config.mml_iceroads_path, &db, SQLITE_OPEN_READONLY, 0);
 
-			assert(sqlite3_column_type(statement, 0) == SQLITE_BLOB);
-			assert(sqlite3_column_type(statement, 1) == SQLITE_INTEGER);
-			assert(sqlite3_column_type(statement, 2) == SQLITE_INTEGER);
-			assert(sqlite3_column_type(statement, 3) == SQLITE_INTEGER);
-			assert(sqlite3_column_type(statement, 4) == SQLITE_INTEGER);
-			assert(sqlite3_column_type(statement, 5) == SQLITE_TEXT);
+		if (rc != SQLITE_OK) {
+			goto cleanup_output;
+		}
 
-			int handled = handle_row(output, projection,
-					sqlite3_column_blob(statement, 0),
-					sqlite3_column_int(statement, 1),
-					sqlite3_column_int(statement, 2),
-					sqlite3_column_int(statement, 3),
-					sqlite3_column_int(statement, 4),
-					sqlite3_column_text(statement, 5));
+		statement = prepare_statement(db, mml_iceroads_sql_query);
 
-			if (handled) {
-				num_ways_processed++;
-			} else {
-				num_invalid_ways++;
-			}
+		if (!statement) {
+			goto cleanup_output;
+		}
 
-			if (!(num_ways_processed & 0x3FFF)) {
-				fprintf(stderr, "\33[A\33[2K\r(1/2) Processing ways.\t\t%3d%%\n",
-						(num_ways_processed + num_invalid_ways) * 100 / num_ways_total);
-			}
-
-			break;
-
-		default:
-			fprintf(output, "sqlite3_step: %s\n%s\n%s\n",
-					sqlite3_errstr(rc),
-					sqlite3_sql(statement),
-					sqlite3_errmsg(db));
+		if(!run_query(statement, mml_iceroads_row, &context)) {
 			goto cleanup;
 		}
-	} while (rc != SQLITE_DONE);
 
-	fprintf(stderr, "\33[A\33[2K\r(1/2) Processing ways.\t\t100%%\n");
+		num_ways_processed += context.num_valid;
+		num_invalid_ways += context.num_invalid;
+	}
 
 	/* Write buffered ways. */
 
-	fprintf(stderr, "\n");
-
 	for (int i = 0; i < num_ways_processed; i++) {
-		if (!(i & 0x3FFF)) {
-			fprintf(stderr, "\33[A\33[\r2K(2/2) Writing ways to file.\t%3d%%\n",
-					i * 100 / num_ways_processed);
-		}
-
 		int way_id = way_buffer_pop_int();
 
 		fprintf(output, "<way visible=\"true\" id=\"%d\">", way_id);
@@ -465,15 +605,19 @@ main(int argc, char **argv)
 		fprintf(output, "<tag k=\"oneway\" v=\"%s\"/>", osm_strings[oneway]);
 		fprintf(output, "<tag k=\"maxspeed\" v=\"%d\"/>", maxspeed);
 		fprintf(output, "<tag k=\"name\" v=\"%s\"/>", name);
+
+		for (int additional_tag; additional_tag = way_buffer_pop_int();) {
+			fprintf(output, "<tag k=\"%s\" v=\"yes\"/>",
+					osm_strings[additional_tag]);
+		}
+
 		fprintf(output, "</way>\n");
 	}
 
-	fprintf(stderr, "\33[A\33[2K\r(2/2) Writing ways to file.\t100%%\n");
-
-	if (num_invalid_ways > 0) {
+	if (context.num_invalid > 0) {
 		fprintf(stderr, "Input contained %d ways with geometries that"
 				"could not be parsed and were skipped.\n",
-				num_invalid_ways);
+				context.num_invalid);
 	}
 
 	fprintf(output, "</osm>\n");
