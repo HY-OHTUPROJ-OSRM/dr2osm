@@ -504,6 +504,8 @@ run_query(sqlite3_stmt *statement, Row_Function *callback, Query_Context *contex
 			return 0;
 		}
 	} while (rc != SQLITE_DONE);
+
+	return 1;
 }
 
 int
