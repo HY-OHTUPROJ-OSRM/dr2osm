@@ -1,5 +1,9 @@
+*.exe
 *.gpkg
+*.obj
 *.osm
 *.out
+*.pdb
+*.rdi
 *.swp
 dr2osm
