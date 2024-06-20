@@ -24,7 +24,7 @@
 #include "types.h"
 #include "buffer.c"
 
-#define ICE_ROAD_SPEED_LIMIT 30
+#define ICE_ROAD_SPEED_LIMIT 25
 
 #define HIGHWAY\
 	X(HW_NONE, "")\
