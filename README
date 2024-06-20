@@ -28,7 +28,12 @@ input and second the name of the OSM file to be written. For example:
 
 	dr2osm KokoSuomi_Digiroad_K_GeoPackage.gpkg route-data.osm
 
-If the input argument is preceded by the flag --mml-iceroads followed by the
-name of a geopackage file containing National land survey (Maanmittauslaitos)
-ice road data, those roads will be included in the output OSM file with the
-"ice_road" tag.
+The following commandline can be used to modify the behavior of the program.
+If present, they must precede the input argument.
+
+	--mml-iceroads <ice-road-path>	Includes ice roads from MML ice road
+					data in the output.
+	--default-speed-limits		For ways without a specified speed
+					limit in the source data, enters a
+					default speed limit based on the type
+					of way in question.

@@ -2,6 +2,7 @@ typedef struct {
 	char *input_path;
 	char *output_path;
 	char *mml_iceroads_path;
+	int default_speed_limits;
 } Program_Configuration;
 
 typedef struct {
@@ -22,6 +23,7 @@ typedef struct {
 	FILE *output;
 	PJ *projection;
 	int num_valid, num_invalid, num_total;
+	int default_speed_limits;
 } Query_Context;
 
 typedef struct __attribute__((packed)) {

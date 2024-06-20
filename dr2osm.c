@@ -24,7 +24,7 @@
 #include "types.h"
 #include "buffer.c"
 
-#define ICE_ROAD_SPEED_LIMIT 25
+#define ICE_ROAD_SPEED_LIMIT 30
 
 #define HIGHWAY\
 	X(HW_NONE, "")\
@@ -107,6 +107,12 @@ parse_commandline_arguments(Program_Configuration *config, int argc, char **argv
 			config->mml_iceroads_path = argv[0];
 			argc--;
 			argv++;
+		} else if (!strcmp(argument, "--default-speed-limits")) {
+			config->default_speed_limits = 1;
+		} else {
+			fprintf(stderr, "Invalid commandline option \"%s\". "
+					"Prefix it with \"./\", "
+					"if it is intended to be the input path.\n", argument);
 		}
 	}
 
@@ -376,6 +382,38 @@ digiroad_row(sqlite3_stmt *statement, Query_Context *context)
 		break;
 	}
 
+	if (context->default_speed_limits && !speed_limit) {
+		switch (highway) {
+		case HW_MOTORWAY:
+			speed_limit = 80;
+			break;
+
+		case HW_TRUNK:
+			speed_limit = 70;
+			break;
+
+		case HW_PRIMARY:
+			speed_limit = 60;
+			break;
+
+		case HW_SECONDARY:
+			speed_limit = 50;
+			break;
+
+		case HW_TERTIARY:
+			speed_limit = 40;
+			break;
+
+		case HW_UNCLASSIFIED:
+		case HW_RESIDENTIAL:
+			speed_limit = 30;
+			break;
+
+		default:
+			break;
+		}
+	}
+
 	way_buffer_push_int(highway);
 	way_buffer_push_int(route);
 	way_buffer_push_int(oneway);
@@ -477,7 +515,10 @@ main(int argc, char **argv)
 	Program_Configuration config = {0};
 
 	if (!parse_commandline_arguments(&config, argc, argv)) {
-		fprintf(stderr, "Usage: %s [--mml-iceroads <ice-roads-path>] <input-path> <output-path>\n",
+		fprintf(stderr, "Usage: %s "
+				"[--mml-iceroads <ice-roads-path>] "
+				"[--default-speed-limits] "
+				" <input-path> <output-path>\n",
 				argv[0]);
 		return 1;
 	}
@@ -550,6 +591,7 @@ main(int argc, char **argv)
 	Query_Context context = {0};
 	context.output = output;
 	context.projection = projection;
+	context.default_speed_limits = config.default_speed_limits;
 
 	if (!run_query(statement, digiroad_row, &context)) {
 		goto cleanup;
