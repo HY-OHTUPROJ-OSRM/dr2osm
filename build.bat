@@ -10,6 +10,10 @@ set INFILES=dr2osm.c
 set LIBS=sqlite3_i.lib proj.lib
 set LDFLAGS=/incremental:no /subsystem:console /libpath:%libpath%
 
+if "%1" == "release" (
+	set CFLAGS=%CFLAGS% /O2 /DRELEASE_BUILD
+)
+
 cl %CFLAGS% /Fedr2osm.exe %INFILES% %LIBS% /link %LDFLAGS%
 
 popd
