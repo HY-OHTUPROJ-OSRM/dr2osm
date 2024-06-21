@@ -6,10 +6,16 @@
 #define PACK_END
 #endif
 
+#if defined(_WIN32)
+typedef wchar_t Unicode_Character;
+#else
+typedef char Unicode_Character;
+#endif
+
 typedef struct {
-	char *input_path;
-	char *output_path;
-	char *mml_iceroads_path;
+	Unicode_Character *input_path;
+	Unicode_Character *output_path;
+	Unicode_Character *mml_iceroads_path;
 	int default_speed_limits;
 } Program_Configuration;
 

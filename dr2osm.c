@@ -33,6 +33,16 @@
 
 #define ICE_ROAD_SPEED_LIMIT 30
 
+#if defined(_WIN32)
+#define FORMAT_UNICODE_STRING "%ls"
+#define UNICODE_STRCMP(A, B) wcscmp(A, L##B)
+#define UNICODE_FOPEN(FILENAME, MODE) _wfopen(FILENAME, L##MODE)
+#else
+#define FORMAT_UNICODE_STRING "%s"
+#define UNICODE_STRCMP(A, B) strcmp(A, B)
+#define UNICODE_FOPEN(FILENAME, MODE) fopen(FILENAME, MODE)
+#endif
+
 #define HIGHWAY\
 	X(HW_NONE, "")\
 	X(HW_FOOTWAY, "footway")\
@@ -96,17 +106,17 @@ static char mml_iceroads_sql_query[] =
 static int last_id = 0;
 
 static int
-parse_commandline_arguments(Program_Configuration *config, int argc, char **argv)
+parse_commandline_arguments(Program_Configuration *config, int argc, Unicode_Character **argv)
 {
 	argc--;
 	argv++;
 
 	while (argc > 0 && argv[0][0] == '-') {
-		char *argument = argv[0];
+		Unicode_Character *argument = argv[0];
 		argc--;
 		argv++;
 
-		if (!strcmp(argument, "--mml-iceroads")) {
+		if (!UNICODE_STRCMP(argument, "--mml-iceroads")) {
 			if (argc < 1) {
 				return 0;
 			}
@@ -114,10 +124,10 @@ parse_commandline_arguments(Program_Configuration *config, int argc, char **argv
 			config->mml_iceroads_path = argv[0];
 			argc--;
 			argv++;
-		} else if (!strcmp(argument, "--default-speed-limits")) {
+		} else if (!UNICODE_STRCMP(argument, "--default-speed-limits")) {
 			config->default_speed_limits = 1;
 		} else {
-			fprintf(stderr, "Invalid commandline option \"%s\". "
+			fprintf(stderr, "Invalid commandline option \"" FORMAT_UNICODE_STRING "\". "
 					"Prefix it with \"./\", "
 					"if it is intended to be the input path.\n", argument);
 		}
@@ -131,6 +141,27 @@ parse_commandline_arguments(Program_Configuration *config, int argc, char **argv
 	config->output_path = argv[1];
 
 	return 1;
+}
+
+static sqlite3 *
+open_database(Unicode_Character *path)
+{
+	sqlite3 *result;
+	int rc;
+
+#if defined(_WIN32)
+	rc = sqlite3_open16(path, &result);
+#else
+	rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, 0);
+#endif
+
+	if (rc != SQLITE_OK) {
+		fprintf(stderr, "Unable to open \"" FORMAT_UNICODE_STRING "\" for reading: %s\n",
+				path, sqlite3_errmsg(result));
+		return 0;
+	}
+
+	return result;
 }
 
 static sqlite3_stmt *
@@ -516,7 +547,11 @@ run_query(sqlite3_stmt *statement, Row_Function *callback, Query_Context *contex
 }
 
 int
+#if defined(_WIN32)
+wmain(int argc, wchar_t **argv)
+#else
 main(int argc, char **argv)
+#endif
 {
 	/* Initialization. */
 
@@ -524,7 +559,7 @@ main(int argc, char **argv)
 	Program_Configuration config = {0};
 
 	if (!parse_commandline_arguments(&config, argc, argv)) {
-		fprintf(stderr, "Usage: %s "
+		fprintf(stderr, "Usage: " FORMAT_UNICODE_STRING " "
 				"[--mml-iceroads <ice-roads-path>] "
 				"[--default-speed-limits] "
 				" <input-path> <output-path>\n",
@@ -543,14 +578,14 @@ main(int argc, char **argv)
 
 	FILE *output;
 
-	if (!strcmp(config.output_path, "-")) {
+	if (!UNICODE_STRCMP(config.output_path, "-")) {
 		output = stdout;
 	} else {
-		output = fopen(config.output_path, "w");
+		output = UNICODE_FOPEN(config.output_path, "w");
 	}
 
 	if (!output) {
-		fprintf(stderr, "Unable to open \"%s\" for writing: %s\n",
+		fprintf(stderr, "Unable to open \"" FORMAT_UNICODE_STRING "\" for writing: %s\n",
 				config.output_path, strerror(errno));
 		return 1;
 	}
@@ -558,11 +593,9 @@ main(int argc, char **argv)
 	sqlite3 *db;
 	int rc;
 
-	rc = sqlite3_open_v2(config.input_path, &db, SQLITE_OPEN_READONLY, 0);
+	db = open_database(config.input_path);
 
-	if (rc != SQLITE_OK) {
-		fprintf(stderr, "Unable to open \"%s\" for reading: %s\n",
-				config.input_path, sqlite3_errmsg(db));
+	if (!db) {
 		goto cleanup_output;
 	}
 
@@ -615,9 +648,9 @@ main(int argc, char **argv)
 		sqlite3_finalize(statement);
 		sqlite3_close(db);
 
-		rc = sqlite3_open_v2(config.mml_iceroads_path, &db, SQLITE_OPEN_READONLY, 0);
+		db = open_database(config.mml_iceroads_path);
 
-		if (rc != SQLITE_OK) {
+		if (!db) {
 			goto cleanup_output;
 		}
 
