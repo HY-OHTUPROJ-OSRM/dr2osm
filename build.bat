@@ -1,7 +1,7 @@
 @echo off
 pushd %~dp0
 
-set osgeopath=C:\OSGeo4W
+set osgeopath=%USERPROFILE%\OSGeo4W
 set includepath=%osgeopath%\include
 set libpath=%osgeopath%\lib
 
