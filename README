@@ -11,14 +11,37 @@ Dependencies
 - libsqlite3
 - libproj
 
-Installation
-------------
+Building
+--------
 
 Navigate to the project root directory and run the command
 
 	./build.sh release
 
 to compile the program. This outputs a single executable file called `dr2osm`.
+
+Building on Windows
+-------------------
+
+These instructions assume that you are using Microsoft's C compiler and build
+tools and use the provided script for installing dependencies via OSGeo4W.
+Otherwise make the necessary adjustments.
+
+The script `install_dependencies.bat` automatically installs the required
+libraries. By default it creates an install directory called `OSGeo4W` in your
+home directory, but this can be changed by editing the variable named `root` in
+the install script. After running the script, the install directory should
+have a subdirectory named `bin`. Add this directory to your path, so that
+Windows can find the installed libraries.
+
+The script `build.bat` compiles the program. If you changed the install
+directory in the previous step, change the `osgeopath` variable in the build
+script to reflect this. Then run
+
+	build.bat release
+
+to compile the program. This outputs a single executable file named
+`dr2osm.exe`.
 
 Usage
 -----
