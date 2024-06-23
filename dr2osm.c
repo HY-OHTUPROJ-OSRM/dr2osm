@@ -152,7 +152,7 @@ open_database(Unicode_Character *path)
 #if defined(_WIN32)
 	rc = sqlite3_open16(path, &result);
 #else
-	rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, 0);
+	rc = sqlite3_open_v2(path, &result, SQLITE_OPEN_READONLY, 0);
 #endif
 
 	if (rc != SQLITE_OK) {
