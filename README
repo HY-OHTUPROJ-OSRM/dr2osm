@@ -36,7 +36,7 @@ Windows can find the installed libraries.
 
 The script `build.bat` compiles the program. If you changed the install
 directory in the previous step, change the `osgeopath` variable in the build
-script to reflect this. Then run
+script to reflect this. Then, in a developer command prompt, run
 
 	build.bat release
 
