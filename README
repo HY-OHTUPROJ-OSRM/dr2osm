@@ -5,6 +5,9 @@ Command line utility to convert Digiroad K-material geopackage to an OSM format
 compatible with OSRM. Get the Digiroad material at
 https://ava.vaylapilvi.fi/ava/Tie/Digiroad/Aineistojulkaisut
 
+The program has a wiki page with some other information here:
+https://github.com/HY-OHTUPROJ-OSRM/osrm-project/wiki/Digiroad-to-OSM-transformation
+
 Dependencies
 ------------
 
