@@ -231,7 +231,13 @@ generate_id()
 }
 
 static int
-buffer_ids(const Geopackage_Binary_Header *geom_header, int reverse_node_order, Query_Context *context) {
+buffer_ids(const Geopackage_Binary_Header *geom_header, int geom_size,
+		int reverse_node_order, Query_Context *context)
+{
+	if ((geom_size -= sizeof(Geopackage_Binary_Header)) < 0) {
+		return 0;
+	}
+
 	int envelope_indicator = (geom_header->flags >> 1) & 7;
 
 	if (envelope_indicator > 4) {
@@ -241,6 +247,11 @@ buffer_ids(const Geopackage_Binary_Header *geom_header, int reverse_node_order, 
 	static int envelope_sizes[] = { 0, 32, 48, 48, 64 };
 
 	int envelope_size = envelope_sizes[envelope_indicator];
+
+	if ((geom_size -= envelope_size + sizeof(Wkb_Line_String_Any)) < 0) {
+		return 0;
+	}
+
 	Wkb_Line_String_Any *line_string = (Wkb_Line_String_Any *)(geom_header->envelope + envelope_size);
 
 	if (line_string->byte_order != 1) {
@@ -264,6 +275,10 @@ buffer_ids(const Geopackage_Binary_Header *geom_header, int reverse_node_order, 
 		break;
 
 	default:
+		return 0;
+	}
+
+	if ((geom_size -= line_string->num_points * point_stride * sizeof(double)) < 0) {
 		return 0;
 	}
 
@@ -354,6 +369,7 @@ digiroad_row(sqlite3_stmt *statement, Query_Context *context)
 	assert(sqlite3_column_type(statement, 5) == SQLITE_TEXT);
 
 	const Geopackage_Binary_Header *geom_header = sqlite3_column_blob(statement, 0);
+	int geom_size = sqlite3_column_bytes(statement, 0);
 	int speed_limit = sqlite3_column_int(statement, 1);
 	int class = sqlite3_column_int(statement, 2);
 	int type = sqlite3_column_int(statement, 3);
@@ -362,7 +378,7 @@ digiroad_row(sqlite3_stmt *statement, Query_Context *context)
 
 	int reverse_node_order = (direction == 3);
 
-	if (!buffer_ids(geom_header, reverse_node_order, context)) {
+	if (!buffer_ids(geom_header, geom_size, reverse_node_order, context)) {
 		return 0;
 	}
 
@@ -474,12 +490,13 @@ mml_iceroads_row(sqlite3_stmt* statement, Query_Context *context)
 	assert(sqlite3_column_type(statement, 2) == SQLITE_TEXT);
 
 	const Geopackage_Binary_Header *geom_header = sqlite3_column_blob(statement, 0);
+	int geom_size = sqlite3_column_bytes(statement, 0);
 	int direction = sqlite3_column_int(statement, 1);
 	const char *name = sqlite3_column_text(statement, 2);
 
 	int reverse_node_order = (direction == 2);
 
-	if (!buffer_ids(geom_header, reverse_node_order, context)) {
+	if (!buffer_ids(geom_header, geom_size, reverse_node_order, context)) {
 		return 0;
 	}
 
