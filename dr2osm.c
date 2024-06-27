@@ -108,6 +108,8 @@ static int last_id = 0;
 static int
 parse_commandline_arguments(Program_Configuration *config, int argc, Unicode_Character **argv)
 {
+	memset(config, 0, sizeof(Program_Configuration));
+
 	argc--;
 	argv++;
 
@@ -574,7 +576,7 @@ main(int argc, char **argv)
 	/* Initialization. */
 
 	int result = 1;
-	Program_Configuration config = {0};
+	Program_Configuration config;
 
 	if (!parse_commandline_arguments(&config, argc, argv)) {
 		fprintf(stderr, "Usage: " FORMAT_UNICODE_STRING " "
