@@ -7,6 +7,9 @@ static jmp_buf out_of_memory;
 
 #if defined(_WIN32)
 
+/* On Windows use the VirtualAlloc interface to reserve an address range and to
+ * commit memory to a buffer. */
+
 static void *
 reserve_memory(intptr_t size)
 {
@@ -40,6 +43,9 @@ get_memory_error_message()
 
 #else
 
+/* On POSIX use mmap to reserve an address range and mprotect to commit memory
+ * to a buffer. */
+
 static void *
 reserve_memory(intptr_t size)
 {
@@ -69,6 +75,9 @@ get_memory_error_message()
 
 #endif
 
+/* On error the various memory functions longjmp to out_of_memory, which is set
+ * in the main function. */
+
 static int
 init_buffer(Growable_Buffer *buffer, intptr_t size)
 {
@@ -91,6 +100,7 @@ init_buffer(Growable_Buffer *buffer, intptr_t size)
 	return 1;
 }
 
+/* Pushes to the end of the buffer, committing more memory if needed. */
 static void *
 buffer_push(Growable_Buffer *buffer, intptr_t size)
 {
@@ -114,6 +124,7 @@ buffer_push(Growable_Buffer *buffer, intptr_t size)
 	return result;
 }
 
+/* Pops from the start of the buffer. */
 static void *
 buffer_pop(Growable_Buffer *buffer, intptr_t size)
 {
@@ -136,6 +147,8 @@ way_buffer_push_int(int value)
 	return result;
 }
 
+/* Strings are buffered as zero-terminated 8 bit character sequences padded to
+ * the next 4 byte boundary. */
 static void
 way_buffer_push_string(const char *value)
 {
@@ -182,6 +195,10 @@ alloc_node()
 	return buffer_push(&node_buffer, sizeof(Node));
 }
 
+/* Buffers nodes (as coordinate pairs) into a quad tree. If a node with
+ * identical coordinates has already been buffered, returns a pointer to the
+ * previously seen node. Otherwise allocates a new node with its id field
+ * initialized to 0 and returns a pointer to it. */
 static Node *
 node_upsert(int x, int y)
 {

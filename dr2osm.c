@@ -105,6 +105,10 @@ static char mml_iceroads_sql_query[] =
 
 static int last_id = 0;
 
+/* When passed the argc and argv arguments of the main function, reads the
+ * commandline arguments and fills in the configuration struct pointed to by
+ * config.
+ * Returns nonzero on success, 0 on error. */
 static int
 parse_commandline_arguments(Program_Configuration *config, int argc, Unicode_Character **argv)
 {
@@ -146,6 +150,8 @@ parse_commandline_arguments(Program_Configuration *config, int argc, Unicode_Cha
 	return 1;
 }
 
+/* Opens the sqlite3 database at path and returns the database handle.
+ * Returns 0 on error. */
 static sqlite3 *
 open_database(Unicode_Character *path)
 {
@@ -167,6 +173,8 @@ open_database(Unicode_Character *path)
 	return result;
 }
 
+/* Prepares in the database db the sql statement in the string sql.
+ * Returns 0 on error. */
 static sqlite3_stmt *
 prepare_statement(sqlite3 *db, char *sql)
 {
@@ -183,6 +191,9 @@ prepare_statement(sqlite3 *db, char *sql)
 	return result;
 }
 
+/* Prepares and executes a query counting the number of ways in the Digiroad
+ * database opened in the database db, and returns the result.
+ * Returns 0 on error. */
 static int
 get_num_ways(sqlite3 *db)
 {
@@ -225,18 +236,29 @@ get_num_ways(sqlite3 *db)
 	return result;
 }
 
+/* Return a unique ID number for a node or way.
+ * Please don't call this more than INT_MAX times. <3 */
 static int
 generate_id()
 {
 	int result = ++last_id;
-	assert(result > 0);
+	assert(result > 0); /* TODO handle this properly. */
 	return result;
 }
 
+/* Buffers into the way buffer the first part of the data for a single way,
+ * i.e. the way ID followed by a zero-terminated list of associated node IDs.
+ * Returns nonzero on success, 0 on error. */
 static int
 buffer_ids(const Geopackage_Binary_Header *geom_header, int geom_size,
 		int reverse_node_order, Query_Context *context)
 {
+	/* Parse geometry headers and validate the geometry headers.
+	 * This includes the Geopackage binary header
+	 * https://docs.ogc.org/is/12-128r17/12-128r17.html#gpb_format
+	 * and the well known binary header
+	 * https://portal.ogc.org/files/?artifact_id=25355 */
+
 	if ((geom_size -= sizeof(Geopackage_Binary_Header)) < 0) {
 		return 0;
 	}
@@ -285,6 +307,11 @@ buffer_ids(const Geopackage_Binary_Header *geom_header, int geom_size,
 		return 0;
 	}
 
+	/* Start buffering ways and writing out nodes. If a node with identical
+	 * coordinates has been encountered before, buffer the ID of the
+	 * previously seen node with the way data. Otherwise generate a new node
+	 * ID and write the node to output. */
+
 	int *way_id = way_buffer_push_int(0);
 
 	int prev_x = INT_MIN;
@@ -332,6 +359,9 @@ buffer_ids(const Geopackage_Binary_Header *geom_header, int geom_size,
 	return 1;
 }
 
+/* Callback function passed to run_query to handle the rows of the Digiroad
+ * query.
+ * Returns nonzero on valid row, 0 on invalid row. */
 static int
 digiroad_row(sqlite3_stmt *statement, Query_Context *context)
 {
@@ -481,6 +511,9 @@ digiroad_row(sqlite3_stmt *statement, Query_Context *context)
 	return 1;
 }
 
+/* Callback function passed to run_query to handle the rows of the ice road
+ * query.
+ * Returns nonzero on valid row, 0 on invalid row. */
 static int
 mml_iceroads_row(sqlite3_stmt* statement, Query_Context *context)
 {
@@ -530,6 +563,9 @@ mml_iceroads_row(sqlite3_stmt* statement, Query_Context *context)
 	return 1;
 }
 
+/* Steps statement until completion and passes it to callback together with
+ * context for each row returned.
+ * Returns nonzero on success, 0 on error. */
 static int
 run_query(sqlite3_stmt *statement, Row_Function *callback, Query_Context *context)
 {
@@ -568,6 +604,7 @@ run_query(sqlite3_stmt *statement, Row_Function *callback, Query_Context *contex
 
 int
 #if defined(_WIN32)
+/* Take arguments as UTF-16 to allow unicode file paths on Windows. */
 wmain(int argc, wchar_t **argv)
 #else
 main(int argc, char **argv)
