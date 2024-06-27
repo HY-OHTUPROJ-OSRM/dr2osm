@@ -130,6 +130,7 @@ parse_commandline_arguments(Program_Configuration *config, int argc, Unicode_Cha
 			fprintf(stderr, "Invalid commandline option \"" FORMAT_UNICODE_STRING "\". "
 					"Prefix it with \"./\", "
 					"if it is intended to be the input path.\n", argument);
+			return 0;
 		}
 	}
 
