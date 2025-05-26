@@ -91,7 +91,7 @@ static char input_sql_query[] =
 		"COALESCE(l.toiminn_lk, 0) AS class,"
 		"COALESCE(l.linkkityyp, 0) AS type,"
 		"COALESCE(l.ajosuunta, 0) AS direction,"
-		"COALESCE(l.tienimi_su, l.tienimi_ru, l.tienimi_sa, '') AS name\n"
+		"COALESCE(l.tienimi_su, l.tienimi_ru, l.tienim_psa, l.tienim_ksa, l.tienim_isa, '') AS name\n"
 	"FROM dr_linkki_k AS l LEFT OUTER JOIN dr_nopeusrajoitus_k AS n USING (segm_id);\n";
 	//"WHERE l.kuntakoodi=91;";
 
