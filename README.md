@@ -10,12 +10,14 @@ https://github.com/HY-OHTUPROJ-OSRM/osrm-project/wiki/Digiroad-to-OSM-transforma
 
 #### Installing dependencies on MacOS
 Install the PROJ library
+
 	brew install proj
 
 ### Building
 
 #### Building on Linux/MacOS
 Compile the program
+
 	./build.sh release
 
 This outputs a single executable file called `dr2osm`.
@@ -58,5 +60,6 @@ If present, they must precede the input argument.
 					of way in question.
 
 #### Fix big size on MacOS
+
 	brew install osmium-tool
 	osmium cat route-data.osm -o route-data.pbf
