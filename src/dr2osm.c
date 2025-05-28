@@ -91,8 +91,11 @@ static char input_sql_query[] =
 		"COALESCE(l.toiminn_lk, 0) AS class,"
 		"COALESCE(l.linkkityyp, 0) AS type,"
 		"COALESCE(l.ajosuunta, 0) AS direction,"
-		"COALESCE(l.tienimi_su, l.tienimi_ru, l.tienim_psa, l.tienim_ksa, l.tienim_isa, '') AS name\n"
-	"FROM dr_linkki_k AS l LEFT OUTER JOIN dr_nopeusrajoitus_k AS n USING (segm_id);\n";
+		"COALESCE(l.tienimi_su, l.tienimi_ru, l.tienim_psa, l.tienim_ksa, l.tienim_isa, '') AS name,"
+		"COALESCE(h.arvo, 0) AS height_cm\n"
+    "FROM dr_linkki_k AS l\n"
+    	"LEFT OUTER JOIN dr_nopeusrajoitus_k AS n USING (segm_id)\n"
+    	"LEFT OUTER JOIN dr_suurin_sallittu_korkeus_k AS h USING (segm_id);\n";
 	//"WHERE l.kuntakoodi=91;";
 
 static char mml_iceroads_sql_query[] =
@@ -393,6 +396,7 @@ digiroad_row(sqlite3_stmt *statement, Query_Context *context)
 	assert(!strcmp(sqlite3_column_name(statement, 3), "type"));
 	assert(!strcmp(sqlite3_column_name(statement, 4), "direction"));
 	assert(!strcmp(sqlite3_column_name(statement, 5), "name"));
+	assert(!strcmp(sqlite3_column_name(statement, 6), "height_cm"));
 
 	assert(sqlite3_column_type(statement, 0) == SQLITE_BLOB);
 	assert(sqlite3_column_type(statement, 1) == SQLITE_INTEGER);
@@ -400,6 +404,7 @@ digiroad_row(sqlite3_stmt *statement, Query_Context *context)
 	assert(sqlite3_column_type(statement, 3) == SQLITE_INTEGER);
 	assert(sqlite3_column_type(statement, 4) == SQLITE_INTEGER);
 	assert(sqlite3_column_type(statement, 5) == SQLITE_TEXT);
+	assert(sqlite3_column_type(statement, 6) == SQLITE_INTEGER);
 
 	const Geopackage_Binary_Header *geom_header = sqlite3_column_blob(statement, 0);
 	int geom_size = sqlite3_column_bytes(statement, 0);
@@ -408,6 +413,7 @@ digiroad_row(sqlite3_stmt *statement, Query_Context *context)
 	int type = sqlite3_column_int(statement, 3);
 	int direction = sqlite3_column_int(statement, 4);
 	const char *name = sqlite3_column_text(statement, 5);
+	int height_cm = sqlite3_column_int(statement, 6);
 
 	int reverse_node_order = (direction == 3);
 
@@ -506,6 +512,7 @@ digiroad_row(sqlite3_stmt *statement, Query_Context *context)
 	way_buffer_push_int(oneway);
 	way_buffer_push_int(speed_limit);
 	way_buffer_push_string(name);
+	way_buffer_push_int(height_cm);
 	way_buffer_push_int(0); /* No additional tags. */
 
 	return 1;
@@ -747,6 +754,11 @@ main(int argc, char **argv)
 		fprintf(output, "<tag k=\"oneway\" v=\"%s\"/>", osm_strings[oneway]);
 		fprintf(output, "<tag k=\"maxspeed\" v=\"%d\"/>", maxspeed);
 		fprintf(output, "<tag k=\"name\" v=\"%s\"/>", name);
+
+		int height_cm = way_buffer_pop_int();
+        if (height_cm > 0) {
+            fprintf(output, "<tag k=\"maxheight\" v=\"%.1f\"/>", height_cm / 100.0);
+        }
 
 		for (int additional_tag; additional_tag = way_buffer_pop_int();) {
 			fprintf(output, "<tag k=\"%s\" v=\"yes\"/>",
